@@ -250,12 +250,14 @@ module.exports.snapshot = (event, context, cb) => {
   _(event.Records)
     .flatMap(getRelatedEvents)
     .map(toTrimmedEvents)
+    .tap(isSnapshotUpToDate)
     //get snapshot
     .map(view)
     //.flatMap(lockSnapshot)
     //delete older events
     //update and unlock snapshot
     .tap(uow => console.log('snapshot $LATEST$: %j', uow))
+    .errors(handleErrors)
     .collect()
     .toCallback(cb)
 
@@ -271,17 +273,35 @@ module.exports.snapshot = (event, context, cb) => {
 
 const toTrimmedEvents = (uow) => {
   const horizon = Date.now() - (1000 * 60) //one minute ago
-  const oldEvents = uow.data.Items.filter(item => item.event.timestamp < cutoff)
+  const oldEvents = uow.data.Items.filter(item => item.event.timestamp < horizon)
   
-  uow.data.Items = oldEvents
+  uow.data = { Items: oldEvents}
 
   return uow
 }
 
-const lockSnapshot = (uow) => {
-  if (uow.data.Items.length > 0) {
+const isSnapshotUpToDate = (uow) => {
+  if (!uow.data.Items.length) {
+    const noWork = new Error('Current snapshot is up to date.')
+    noWork.code = 'NoFurtherWork'
+    noWork.uow = uow
 
+    throw noWork
   }
-  else
-    return _(Promise.resolve(uow))
+}
+
+const getSnapshot = (uow) => {
+
+}
+
+const lockSnapshot = (uow) => {
+  
+}
+
+const handleErrors = (err, push) => {
+  if (err.code = 'NoFurtherWork') {
+    push(null, err)
+  } else {
+    push(err)
+  }
 }

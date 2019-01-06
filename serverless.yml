@@ -70,6 +70,8 @@ functions:
     environment:
       EVENTS_TABLE_NAME:
         Ref: Events
+      SNAPSHOTS_TABLE_NAME:
+        Ref: Snapshots
 
 package:
   exclude:
@@ -120,5 +122,18 @@ resources:
           WriteCapacityUnits: 1
         StreamSpecification:
           StreamViewType: NEW_AND_OLD_IMAGES
+    Snapshots:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.stage}-${self:service}-snapshots
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
           
 
