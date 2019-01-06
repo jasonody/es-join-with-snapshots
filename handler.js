@@ -244,3 +244,44 @@ const saveView = (uow) => {
   const db = new aws.DynamoDB.DocumentClient();
   return _(db.put(params).promise());
 };
+
+module.exports.snapshot = (event, context, cb) => {
+  //id: event.[Records].Keys.id.S
+  _(event.Records)
+    .flatMap(getRelatedEvents)
+    .map(toTrimmedEvents)
+    //get snapshot
+    .map(view)
+    //.flatMap(lockSnapshot)
+    //delete older events
+    //update and unlock snapshot
+    .tap(uow => console.log('snapshot $LATEST$: %j', uow))
+    .collect()
+    .toCallback(cb)
+
+  //get all events for updated materialized view
+  //filter--are there any that are older than the live period?
+  //get previous snapshot
+  //build new snapshot
+  //lock snapshot
+  //update snapshot
+  //delete older events from events store
+  //unlock snapshot
+}
+
+const toTrimmedEvents = (uow) => {
+  const horizon = Date.now() - (1000 * 60) //one minute ago
+  const oldEvents = uow.data.Items.filter(item => item.event.timestamp < cutoff)
+  
+  uow.data.Items = oldEvents
+
+  return uow
+}
+
+const lockSnapshot = (uow) => {
+  if (uow.data.Items.length > 0) {
+
+  }
+  else
+    return _(Promise.resolve(uow))
+}

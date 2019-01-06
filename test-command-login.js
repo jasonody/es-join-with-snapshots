@@ -10,6 +10,6 @@ aws.config.update({
   region: 'us-east-1'
 })
 
-const callback = (err, data) => err ? console.log('Error: %j', err) : console.log('Data: %j', data)
+const callback = (err, data) => err ? console.log('Returned Error: %j', err) : console.log('Returned Data: %j', data)
 
 handler.commandLogin(null, {}, callback)

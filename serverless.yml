@@ -2,6 +2,8 @@ service: cndp-cqrs-es-join
 
 provider:
   name: aws
+  region: ${opt:region, 'us-east-1'}
+  stage: ${opt:stage, 'dev'}
   runtime: nodejs6.10
   iamRoleStatements:
     - Effect: Allow
@@ -56,6 +58,18 @@ functions:
         Ref: Events
       VIEW_TABLE_NAME:
         Ref: View
+  snapshot:
+    handler: handler.snapshot
+    events:
+      - stream:
+          type: dynamodb
+          arn:
+            Fn::GetAtt:
+              - View
+              - StreamArn
+    environment:
+      EVENTS_TABLE_NAME:
+        Ref: Events
 
 package:
   exclude:
@@ -69,13 +83,13 @@ resources:
     Stream:
       Type: AWS::Kinesis::Stream
       Properties:
-        Name: ${opt:stage}-${self:service}-stream
+        Name: ${self:provider.stage}-${self:service}-stream
         RetentionPeriodHours: 24
         ShardCount: 1
     View:
       Type: AWS::DynamoDB::Table
       Properties:
-        TableName: ${opt:stage}-${self:service}-view
+        TableName: ${self:provider.stage}-${self:service}-view
         AttributeDefinitions:
           - AttributeName: id
             AttributeType: S
@@ -85,10 +99,12 @@ resources:
         ProvisionedThroughput:
           ReadCapacityUnits: 1
           WriteCapacityUnits: 1
+        StreamSpecification:
+          StreamViewType: KEYS_ONLY
     Events:
       Type: AWS::DynamoDB::Table
       Properties:
-        TableName: ${opt:stage}-${self:service}-events
+        TableName: ${self:provider.stage}-${self:service}-events
         AttributeDefinitions:
           - AttributeName: id
             AttributeType: S
