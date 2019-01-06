@@ -11,7 +11,7 @@ aws.config.update({
   region: 'us-east-1'
 })
 
-const callback = (err, data) => err ? console.log('Returned Error: %j', err) : console.log('Returned Data: %j', data)
+const callback = (err, data) => err ? console.log('Returned Error: %j', err) : console.log('DONE')//console.log('Returned Data: %j', data)
 
 const event = {
   "Records": [

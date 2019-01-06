@@ -179,6 +179,7 @@ module.exports.trigger = (event, context, cb) => {
   _(event.Records)
     .tap(r => console.log('record: %j', r))
     .flatMap(getRelatedEvents)
+    .flatMap(getSnapshot)
     .map(view)
     .tap(uow => console.log('%j', uow))
     .flatMap(saveView)
@@ -209,6 +210,14 @@ const getRelatedEvents = (record) => {
 
 const view = (uow) => {
   // create a dictionary by event type
+
+  const defaultValues = {
+    'user-created': { user: { name: undefined } },
+    'user-loggedIn': { timestamp: undefined },
+    'order-submitted': []
+  }
+  const snapshot = uow.snapshot && uow.snapshot.data || defaultValues
+
   uow.dictionary = uow.data.Items.reduce((dictionary, item) => {
     // events are sorted by range key
     item.event.type === 'order-submitted' ?
@@ -216,11 +225,7 @@ const view = (uow) => {
       dictionary[item.event.type] = item.event;
 
     return dictionary;
-  }, { // default values
-      'user-created': { user: { name: undefined } },
-      'user-loggedIn': { timestamp: undefined },
-      'order-submitted': []
-    });
+  }, snapshot);
 
   // map the fields
   uow.item = {
@@ -246,36 +251,26 @@ const saveView = (uow) => {
 };
 
 module.exports.snapshot = (event, context, cb) => {
-  //id: event.[Records].Keys.id.S
   _(event.Records)
     .flatMap(getRelatedEvents)
     .map(toTrimmedEvents)
     .tap(isSnapshotUpToDate)
-    //get snapshot
+    .flatMap(getSnapshot)
     .map(view)
     //.flatMap(lockSnapshot)
     //delete older events
     //update and unlock snapshot
-    .tap(uow => console.log('snapshot $LATEST$: %j', uow))
+    //.tap(uow => console.log('snapshot $LATEST$: %j', uow))
     .errors(handleErrors)
     .collect()
     .toCallback(cb)
-
-  //get all events for updated materialized view
-  //filter--are there any that are older than the live period?
-  //get previous snapshot
-  //build new snapshot
-  //lock snapshot
-  //update snapshot
-  //delete older events from events store
-  //unlock snapshot
 }
 
 const toTrimmedEvents = (uow) => {
   const horizon = Date.now() - (1000 * 60) //one minute ago
   const oldEvents = uow.data.Items.filter(item => item.event.timestamp < horizon)
   
-  uow.data = { Items: oldEvents}
+  uow.data = { Items: oldEvents }
 
   return uow
 }
@@ -291,7 +286,21 @@ const isSnapshotUpToDate = (uow) => {
 }
 
 const getSnapshot = (uow) => {
+  const params = {
+    Key: { 'id': uow.record.dynamodb.Keys.id.S },
+    TableName: process.env.SNAPSHOTS_TABLE_NAME
+  }
 
+  const db = new aws.DynamoDB.DocumentClient();
+
+  return _(db.get(params).promise()
+    .then(snapshot => {
+      //TODO: if snapshot is locked, throw transient error
+      uow.snapshot = snapshot
+
+      return uow
+    })
+  );
 }
 
 const lockSnapshot = (uow) => {

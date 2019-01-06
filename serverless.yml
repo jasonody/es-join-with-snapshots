@@ -10,12 +10,16 @@ provider:
       Action:
         - dynamodb:Query
         - dynamodb:PutItem
+        - dynamodb:GetItem
       Resource:
         - Fn::GetAtt:
             - View
             - Arn
         - Fn::GetAtt:
             - Events
+            - Arn
+        - Fn::GetAtt:
+            - Snapshots
             - Arn
     - Effect: Allow
       Action:
@@ -58,6 +62,8 @@ functions:
         Ref: Events
       VIEW_TABLE_NAME:
         Ref: View
+      SNAPSHOTS_TABLE_NAME:
+        Ref: Snapshots
   snapshot:
     handler: handler.snapshot
     events:
