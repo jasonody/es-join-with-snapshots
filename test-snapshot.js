@@ -1,7 +1,7 @@
 'use strict'
 
 process.env.EVENTS_TABLE_NAME = 'dev-cndp-cqrs-es-join-events'
-process.env.SNAPSHOTS_TABLE_NAME = 'dev-cndp-cqrs-es-join-snapshots'
+process.env.VIEW_TABLE_NAME = 'dev-cndp-cqrs-es-join-view'
 
 const aws = require('aws-sdk')
 

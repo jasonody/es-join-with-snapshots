@@ -18,9 +18,6 @@ provider:
         - Fn::GetAtt:
             - Events
             - Arn
-        - Fn::GetAtt:
-            - Snapshots
-            - Arn
     - Effect: Allow
       Action:
         - kinesis:PutRecord
@@ -62,22 +59,18 @@ functions:
         Ref: Events
       VIEW_TABLE_NAME:
         Ref: View
-      SNAPSHOTS_TABLE_NAME:
-        Ref: Snapshots
-  snapshot:
-    handler: handler.snapshot
-    events:
-      - stream:
-          type: dynamodb
-          arn:
-            Fn::GetAtt:
-              - View
-              - StreamArn
-    environment:
-      EVENTS_TABLE_NAME:
-        Ref: Events
-      SNAPSHOTS_TABLE_NAME:
-        Ref: Snapshots
+  # snapshot:
+  #   handler: handler.snapshot
+  #   events:
+  #     - stream:
+  #         type: dynamodb
+  #         arn:
+  #           Fn::GetAtt:
+  #             - View
+  #             - StreamArn
+  #   environment:
+  #     EVENTS_TABLE_NAME:
+  #       Ref: Events
 
 package:
   exclude:
@@ -128,18 +121,3 @@ resources:
           WriteCapacityUnits: 1
         StreamSpecification:
           StreamViewType: NEW_AND_OLD_IMAGES
-    Snapshots:
-      Type: AWS::DynamoDB::Table
-      Properties:
-        TableName: ${self:provider.stage}-${self:service}-snapshots
-        AttributeDefinitions:
-          - AttributeName: id
-            AttributeType: S
-        KeySchema:
-          - AttributeName: id
-            KeyType: HASH
-        ProvisionedThroughput:
-          ReadCapacityUnits: 1
-          WriteCapacityUnits: 1
-          
-
