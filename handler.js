@@ -233,6 +233,8 @@ const view = (uow) => {
     name: uow.dictionary['user-created'].user.name,
     lastLogin: uow.dictionary['user-loggedIn'].timestamp,
     recentOrderCount: uow.dictionary['order-submitted'].length,
+    snapshot: uow.view && JSON.stringify(uow.view.snapshot) || undefined,
+    lock: uow.view && uow.view.lock || undefined
   };
 
   return uow;
@@ -258,7 +260,7 @@ module.exports.snapshot = (event, context, cb) => {
     .flatMap(getView)
     //lock view
     .map(viewSnapshot)
-    //delete older events
+    .flatMap(deleteTrimmedEvents)
     .flatMap(saveView) //and unlock view
     .tap(uow => console.log('snapshot $LATEST$: %j', uow))
     .errors(handleErrors)
@@ -296,7 +298,10 @@ const getView = (uow) => {
   return _(db.get(params).promise()
     .then(view => {
       //TODO: if view is locked, throw transient error
-      view.Item.snapshot = JSON.parse(view.Item.snapshot)
+      if (view.Item && view.Item.snapshot) {
+        view.Item.snapshot = JSON.parse(view.Item.snapshot)
+      }
+      
       uow.view = view.Item
 
       return uow
@@ -337,28 +342,32 @@ const lockSnapshot = (uow) => {
 }
 
 const deleteTrimmedEvents = (uow) => {
-  const ops = uow.data.Items.map(event => {
+  const deleteOps = uow.data.Items.map(event => {
     return {
       DeleteRequest: {
         Key: {
           id: event.id,
           sequence: event.sequence
-        }
+        },
+        Item: {}
       }
     }
   })
   
   const params = {
     RequestItems: {
+      [process.env.EVENTS_TABLE_NAME]: deleteOps,
+      //[process.env.VIEW_TABLE_NAME] : [{ PutRequest: { Item: uow.item } }]
     }
   }
-  params.RequestItems[process.env.EVENTS_TABLE_NAME] = ops
   console.log('delete params: %j', params)
-  var db = new AWS.DynamoDB.DocumentClient();
+  var db = new aws.DynamoDB.DocumentClient();
 
   return _(db.batchWrite(params).promise()
     .then(data => {
-      return uow.deleteResult = data
+      uow.deleteResult = data
+
+      return uow
     }))
 }
 
