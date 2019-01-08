@@ -337,7 +337,29 @@ const lockSnapshot = (uow) => {
 }
 
 const deleteTrimmedEvents = (uow) => {
+  const ops = uow.data.Items.map(event => {
+    return {
+      DeleteRequest: {
+        Key: {
+          id: event.id,
+          sequence: event.sequence
+        }
+      }
+    }
+  })
   
+  const params = {
+    RequestItems: {
+    }
+  }
+  params.RequestItems[process.env.EVENTS_TABLE_NAME] = ops
+  console.log('delete params: %j', params)
+  var db = new AWS.DynamoDB.DocumentClient();
+
+  return _(db.batchWrite(params).promise()
+    .then(data => {
+      return uow.deleteResult = data
+    }))
 }
 
 const handleErrors = (err, push) => {
