@@ -180,6 +180,7 @@ module.exports.trigger = (event, context, cb) => {
     .tap(r => console.log('record: %j', r))
     .flatMap(getRelatedEvents)
     .flatMap(getView)
+    //is view locked?
     .map(view)
     .tap(uow => console.log('%j', uow))
     .flatMap(saveView)
@@ -201,9 +202,9 @@ const getRelatedEvents = (record) => {
   const db = new aws.DynamoDB.DocumentClient();
 
   return _(db.query(params).promise()
-    .then(data => ({
+    .then(events => ({
       record: record,
-      data: data,
+      events
     }))
   );
 }
@@ -212,16 +213,16 @@ const view = (uow) => {
   // create a dictionary by event type
 
   const defaultValues = {
-    'user-created': { user: { name: undefined } },
-    'user-loggedIn': { timestamp: undefined },
-    'order-submitted': []
+    'user-created': { user: { name: '**NOT SET**' } },
+    'user-loggedIn': { timestamp: 0 },
+    'order-submitted': { count: 0 }
   }
   const snapshot = uow.view && uow.view.snapshot || defaultValues
 
-  uow.dictionary = uow.data.Items.reduce((dictionary, item) => {
+  uow.dictionary = uow.events.Items.reduce((dictionary, item) => {
     // events are sorted by range key
     item.event.type === 'order-submitted' ?
-      dictionary[item.event.type].push(item.event) :
+      dictionary[item.event.type].count++ :
       dictionary[item.event.type] = item.event;
 
     return dictionary;
@@ -232,25 +233,35 @@ const view = (uow) => {
     id: uow.record.dynamodb.Keys.id.S,
     name: uow.dictionary['user-created'].user.name,
     lastLogin: uow.dictionary['user-loggedIn'].timestamp,
-    recentOrderCount: uow.dictionary['order-submitted'].length,
-    snapshot: uow.view && JSON.stringify(uow.view.snapshot) || undefined,
-    lock: uow.view && uow.view.lock || undefined
+    recentOrderCount: uow.dictionary['order-submitted'].count,
   };
 
   return uow;
 }
 
 const saveView = (uow) => {
-  const params = {
+  var params = {
     TableName: process.env.VIEW_TABLE_NAME,
-    Item: uow.item,
+    Key: { id : uow.item.id },
+    UpdateExpression: 'SET #a = :a, #b = :b, #c = :c',
+    //ConditionExpression: '#a < :MAX',
+    ExpressionAttributeNames: {
+      '#a': 'lastLogin',
+      '#b': 'recentOrderCount',
+      '#c': 'name'
+    },
+    ExpressionAttributeValues: {
+      ':a' : uow.item.lastLogin,
+      ':b' : uow.item.recentOrderCount,
+      ':c' : uow.item.name,
+    }
   };
 
   console.log('save view params: %j', params);
 
   const db = new aws.DynamoDB.DocumentClient();
-  return _(db.put(params).promise());
-};
+  return _(db.update(params).promise());
+}
 
 module.exports.snapshot = (event, context, cb) => {
   _(event.Records)
@@ -258,11 +269,12 @@ module.exports.snapshot = (event, context, cb) => {
     .map(toTrimmedEvents)
     .tap(isSnapshotUpToDate)
     .flatMap(getView)
+    //is view locked?
     //lock view
     .map(viewSnapshot)
     .flatMap(deleteTrimmedEvents)
-    .flatMap(saveView) //and unlock view
-    .tap(uow => console.log('snapshot $LATEST$: %j', uow))
+    .flatMap(saveSnapshot) //and unlock view
+    //.tap(uow => console.log('snapshot $LATEST$: %j', uow))
     .errors(handleErrors)
     .collect()
     .toCallback(cb)
@@ -270,21 +282,25 @@ module.exports.snapshot = (event, context, cb) => {
 
 const toTrimmedEvents = (uow) => {
   const horizon = Date.now() - (1000 * 60) //one minute ago
-  const oldEvents = uow.data.Items.filter(item => item.event.timestamp < horizon)
+  const oldEvents = uow.events.Items.filter(item => item.event.timestamp < horizon)
 
-  uow.data = { Items: oldEvents }
+  uow.events = { Items: oldEvents }
 
   return uow
 }
 
 const isSnapshotUpToDate = (uow) => {
-  if (!uow.data.Items.length) {
+  if (!uow.events.Items.length) {
     const noWork = new Error('Current snapshot is up to date.')
     noWork.code = 'NoFurtherWork'
     noWork.uow = uow
 
     throw noWork
   }
+}
+
+const isViewLocked = (uow) => {
+
 }
 
 const getView = (uow) => {
@@ -306,7 +322,7 @@ const getView = (uow) => {
 
       return uow
     })
-  );
+  )
 }
 
 const viewSnapshot = (uow) => {
@@ -315,26 +331,49 @@ const viewSnapshot = (uow) => {
   const defaultValues = {
     'user-created': { user: { name: undefined } },
     'user-loggedIn': { timestamp: undefined },
-    'order-submitted': []
+    'order-submitted': { count: 0 }
   }
-  const snapshot = uow.view.snapshot || defaultValues
+  const snapshot = uow.view && uow.view.snapshot || defaultValues
 
-  uow.dictionary = uow.data.Items.reduce((dictionary, item) => {
+  uow.dictionary = uow.events.Items.reduce((dictionary, item) => {
     // events are sorted by range key
     item.event.type === 'order-submitted' ?
-      dictionary[item.event.type].push(item.event) :
+      dictionary[item.event.type].count++ :
       dictionary[item.event.type] = item.event;
 
     return dictionary;
   }, snapshot);
 
   // map the fields
-  uow.item = Object.assign(uow.view, {
+  uow.item = {
+    id: uow.view.id,
     snapshot: JSON.stringify(uow.dictionary),
     lock: false
-  })
+  }
 
   return uow;
+}
+
+const saveSnapshot = (uow) => {
+  var params = {
+    TableName: process.env.VIEW_TABLE_NAME,
+    Key: { id : uow.item.id },
+    UpdateExpression: 'SET #a = :a, #b = :b',
+    //ConditionExpression: '#a < :MAX',
+    ExpressionAttributeNames: {
+      '#a': 'snapshot',
+      '#b': 'lock'
+    },
+    ExpressionAttributeValues: {
+      ':a' : uow.item.snapshot,
+      ':b' : uow.item.lock
+    }
+  };
+
+  console.log('save view params: %j', params);
+
+  const db = new aws.DynamoDB.DocumentClient();
+  return _(db.update(params).promise());
 }
 
 const lockSnapshot = (uow) => {
@@ -342,7 +381,7 @@ const lockSnapshot = (uow) => {
 }
 
 const deleteTrimmedEvents = (uow) => {
-  const deleteOps = uow.data.Items.map(event => {
+  const deleteOps = uow.events.Items.map(event => {
     return {
       DeleteRequest: {
         Key: {

@@ -10,6 +10,7 @@ provider:
       Action:
         - dynamodb:Query
         - dynamodb:PutItem
+        - dynamodb:UpdateItem
         - dynamodb:GetItem
       Resource:
         - Fn::GetAtt:
