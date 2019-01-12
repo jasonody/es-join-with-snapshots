@@ -180,7 +180,7 @@ module.exports.trigger = (event, context, cb) => {
     .tap(r => console.log('record: %j', r))
     .flatMap(getRelatedEvents)
     .flatMap(getView)
-    //is view locked?
+    .map(toEventsOutsideOfSnapshot)
     .map(view)
     .tap(uow => console.log('%j', uow))
     .flatMap(saveView)
@@ -244,7 +244,6 @@ const saveView = (uow) => {
     TableName: process.env.VIEW_TABLE_NAME,
     Key: { id : uow.item.id },
     UpdateExpression: 'SET #a = :a, #b = :b, #c = :c',
-    //ConditionExpression: '#a < :MAX',
     ExpressionAttributeNames: {
       '#a': 'lastLogin',
       '#b': 'recentOrderCount',
@@ -266,41 +265,48 @@ const saveView = (uow) => {
 module.exports.snapshot = (event, context, cb) => {
   _(event.Records)
     .flatMap(getRelatedEvents)
-    .map(toTrimmedEvents)
-    .tap(isSnapshotUpToDate)
     .flatMap(getView)
-    //is view locked?
-    //lock view
+    .map(toEventsOutsideOfSnapshot)
+    .tap(isSnapshotUpToDate)
+    .map(toEventsOutsideOfRetentionPeriod)
+    .tap(isSnapshotUpToDate)
     .map(viewSnapshot)
-    .flatMap(deleteTrimmedEvents)
-    .flatMap(saveSnapshot) //and unlock view
-    //.tap(uow => console.log('snapshot $LATEST$: %j', uow))
+    .flatMap(saveSnapshot) //and the latest seq#
     .errors(handleErrors)
     .collect()
     .toCallback(cb)
 }
 
-const toTrimmedEvents = (uow) => {
-  const horizon = Date.now() - (1000 * 60) //one minute ago
-  const oldEvents = uow.events.Items.filter(item => item.event.timestamp < horizon)
+const toEventsOutsideOfSnapshot = (uow) => {
+  let oldEvents = uow.events.Items
+
+  if (uow.view.snapshotSequence)
+    oldEvents = uow.events.Items.filter(item => item.sequence > uow.view.snapshotSequence)
 
   uow.events = { Items: oldEvents }
+  uow.eventsFilterMessage = 'events outside of snapshot'
+
+  return uow
+}
+
+const toEventsOutsideOfRetentionPeriod = (uow) => {
+  const retentionHorizon = Date.now() - (1000 * 60) //one minute ago
+  const oldEvents = uow.events.Items.filter(item => item.event.timestamp < retentionHorizon)
+
+  uow.events = { Items: oldEvents }
+  uow.eventsFilterMessage = 'events outside of retention period'
 
   return uow
 }
 
 const isSnapshotUpToDate = (uow) => {
   if (!uow.events.Items.length) {
-    const noWork = new Error('Current snapshot is up to date.')
+    const noWork = new Error(`Current snapshot is up to date: no ${uow.eventsFilterMessage}`)
     noWork.code = 'NoFurtherWork'
     noWork.uow = uow
 
     throw noWork
   }
-}
-
-const isViewLocked = (uow) => {
-
 }
 
 const getView = (uow) => {
@@ -313,7 +319,6 @@ const getView = (uow) => {
 
   return _(db.get(params).promise()
     .then(view => {
-      //TODO: if view is locked, throw transient error
       if (view.Item && view.Item.snapshot) {
         view.Item.snapshot = JSON.parse(view.Item.snapshot)
       }
@@ -348,7 +353,7 @@ const viewSnapshot = (uow) => {
   uow.item = {
     id: uow.view.id,
     snapshot: JSON.stringify(uow.dictionary),
-    lock: false
+    snapshotSequence: uow.events.Items[uow.events.Items.length - 1].sequence
   }
 
   return uow;
@@ -362,11 +367,11 @@ const saveSnapshot = (uow) => {
     //ConditionExpression: '#a < :MAX',
     ExpressionAttributeNames: {
       '#a': 'snapshot',
-      '#b': 'lock'
+      '#b': 'snapshotSequence'
     },
     ExpressionAttributeValues: {
       ':a' : uow.item.snapshot,
-      ':b' : uow.item.lock
+      ':b' : uow.item.snapshotSequence
     }
   };
 
@@ -374,10 +379,6 @@ const saveSnapshot = (uow) => {
 
   const db = new aws.DynamoDB.DocumentClient();
   return _(db.update(params).promise());
-}
-
-const lockSnapshot = (uow) => {
-  
 }
 
 const deleteTrimmedEvents = (uow) => {
@@ -395,8 +396,7 @@ const deleteTrimmedEvents = (uow) => {
   
   const params = {
     RequestItems: {
-      [process.env.EVENTS_TABLE_NAME]: deleteOps,
-      //[process.env.VIEW_TABLE_NAME] : [{ PutRequest: { Item: uow.item } }]
+      [process.env.EVENTS_TABLE_NAME]: deleteOps
     }
   }
   console.log('delete params: %j', params)
@@ -412,7 +412,7 @@ const deleteTrimmedEvents = (uow) => {
 
 const handleErrors = (err, push) => {
   if (err.code === 'NoFurtherWork') {
-    console.log('NO_WORK!')
+    console.log(`NO_WORK: ${err.message}`)
     push(null, err)
   } else {
     console.log(err)
