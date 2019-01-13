@@ -180,7 +180,7 @@ module.exports.trigger = (event, context, cb) => {
     .tap(r => console.log('record: %j', r))
     .flatMap(getRelatedEvents)
     .flatMap(getView)
-    .map(toEventsOutsideOfSnapshot)
+    .map(filterEventsNewerThanSnapshot)
     .map(view)
     .tap(uow => console.log('%j', uow))
     .flatMap(saveView)
@@ -266,9 +266,9 @@ module.exports.snapshot = (event, context, cb) => {
   _(event.Records)
     .flatMap(getRelatedEvents)
     .flatMap(getView)
-    .map(toEventsOutsideOfSnapshot)
+    .map(filterEventsNewerThanSnapshot)
     .tap(isSnapshotUpToDate)
-    .map(toEventsOutsideOfRetentionPeriod)
+    .map(filterEventsOlderThanRetentionPeriod)
     .tap(isSnapshotUpToDate)
     .map(viewSnapshot)
     .flatMap(saveSnapshot)
@@ -277,24 +277,24 @@ module.exports.snapshot = (event, context, cb) => {
     .toCallback(cb)
 }
 
-const toEventsOutsideOfSnapshot = (uow) => {
-  let oldEvents = uow.events.Items
+const filterEventsNewerThanSnapshot = (uow) => {
+  let newEvents = uow.events.Items
 
-  if (uow.view.snapshotSequence)
-    oldEvents = uow.events.Items.filter(item => item.sequence > uow.view.snapshotSequence)
+  if (uow.view && uow.view.snapshotSequence)
+    newEvents = uow.events.Items.filter(item => item.sequence > uow.view.snapshotSequence)
 
-  uow.events = { Items: oldEvents }
-  uow.eventsFilterMessage = 'events outside of snapshot'
+  uow.events = { Items: newEvents }
+  uow.eventsFilterMessage = 'events newer than snapshot'
 
   return uow
 }
 
-const toEventsOutsideOfRetentionPeriod = (uow) => {
+const filterEventsOlderThanRetentionPeriod = (uow) => {
   const retentionHorizon = Date.now() - (1000 * 60) //one minute ago
   const oldEvents = uow.events.Items.filter(item => item.event.timestamp < retentionHorizon)
 
   uow.events = { Items: oldEvents }
-  uow.eventsFilterMessage = 'events outside of retention period'
+  uow.eventsFilterMessage = 'events older than retention period'
 
   return uow
 }
@@ -381,35 +381,6 @@ const saveSnapshot = (uow) => {
   return _(db.update(params).promise());
 }
 
-const deleteTrimmedEvents = (uow) => {
-  const deleteOps = uow.events.Items.map(event => {
-    return {
-      DeleteRequest: {
-        Key: {
-          id: event.id,
-          sequence: event.sequence
-        },
-        Item: {}
-      }
-    }
-  })
-  
-  const params = {
-    RequestItems: {
-      [process.env.EVENTS_TABLE_NAME]: deleteOps
-    }
-  }
-  console.log('delete params: %j', params)
-  var db = new aws.DynamoDB.DocumentClient();
-
-  return _(db.batchWrite(params).promise()
-    .then(data => {
-      uow.deleteResult = data
-
-      return uow
-    }))
-}
-
 const handleErrors = (err, push) => {
   if (err.code === 'NoFurtherWork') {
     console.log(`NO_WORK: ${err.message}`)
@@ -417,5 +388,62 @@ const handleErrors = (err, push) => {
   } else {
     console.log(err)
     push(err)
+  }
+}
+
+module.exports.trimEvents = (event, context, cb) => {
+  _(event.Records)
+    .flatMap(getRelatedEvents)
+    .flatMap(getView)
+    .map(filterEventsOlderThanSnapshot)
+    .flatMap(deleteEvents)
+    .errors(handleErrors)
+    .collect()
+    .toCallback(cb)
+}
+
+const filterEventsOlderThanSnapshot = (uow) => {
+  let oldEvents = []
+
+  if (uow.view && uow.view.snapshotSequence)
+    oldEvents = uow.events.Items.filter(item => item.sequence < uow.view.snapshotSequence)
+
+  uow.events = { Items: oldEvents }
+  uow.eventsFilterMessage = 'events older than snapshot'
+
+  return uow
+}
+
+const deleteEvents = (uow) => {
+  if (!uow.events.Items.length) {
+    return _(Promise.resolve(uow))
+  } else {
+    const deleteOps = uow.events.Items.map(event => {
+      return {
+        DeleteRequest: {
+          Key: {
+            id: event.id,
+            sequence: event.sequence
+          },
+          Item: {}
+        }
+      }
+    })
+    
+    const params = {
+      RequestItems: {
+        [process.env.EVENTS_TABLE_NAME]: deleteOps
+      }
+    }
+    console.log('delete params: %j', params)
+    var db = new aws.DynamoDB.DocumentClient();
+
+    return _(db.batchWrite(params).promise()
+      .then(data => {
+        uow.deleteEventsResult = data
+
+        return uow
+      })
+    )
   }
 }
