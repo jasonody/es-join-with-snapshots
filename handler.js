@@ -271,7 +271,7 @@ module.exports.snapshot = (event, context, cb) => {
     .map(toEventsOutsideOfRetentionPeriod)
     .tap(isSnapshotUpToDate)
     .map(viewSnapshot)
-    .flatMap(saveSnapshot) //and the latest seq#
+    .flatMap(saveSnapshot)
     .errors(handleErrors)
     .collect()
     .toCallback(cb)

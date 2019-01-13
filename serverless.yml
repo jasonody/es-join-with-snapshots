@@ -72,6 +72,8 @@ functions:
   #   environment:
   #     EVENTS_TABLE_NAME:
   #       Ref: Events
+  #     VIEW_TABLE_NAME:
+  #       Ref: View
 
 package:
   exclude:
