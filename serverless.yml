@@ -1,4 +1,4 @@
-service: cndp-cqrs-es-join
+service: cndp-cqrs-es-join-with-snapshots
 
 provider:
   name: aws
