@@ -1,6 +1,6 @@
 'use strict'
 
-process.env.STREAM_NAME = 'dev-cndp-cqrs-es-join-stream'
+process.env.STREAM_NAME = 'dev-cndp-cqrs-es-join-with-snapshots-stream'
 
 const aws = require('aws-sdk')
 

@@ -319,10 +319,6 @@ const getView = (uow) => {
 
   return _(db.get(params).promise()
     .then(view => {
-      if (view.Item && view.Item.snapshot) {
-        view.Item.snapshot = JSON.parse(view.Item.snapshot)
-      }
-      
       uow.view = view.Item
 
       return uow
@@ -352,7 +348,7 @@ const viewSnapshot = (uow) => {
   // map the fields
   uow.item = {
     id: uow.view.id,
-    snapshot: JSON.stringify(uow.dictionary),
+    snapshot: uow.dictionary,
     snapshotSequence: uow.events.Items[uow.events.Items.length - 1].sequence
   }
 
